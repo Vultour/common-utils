@@ -1,0 +1,135 @@
+#!/usr/bin/env perl
+
+#
+# Timetrack
+# A utility for tracking worktime
+#
+# (c) Martin Kukura
+#
+
+use warnings;
+use strict;
+
+use Getopt::Long;
+
+my $trackfile   = "$ENV{'HOME'}/timetrack.dat";   # Data file location
+my $lockfile    = "$ENV{'HOME'}/.timetrack.lock"; # Lock file location
+
+my $arrival     = 0;
+my $departure   = 0;
+my $list        = 0;
+
+GetOptions(
+    "arrival|a" => \$arrival,
+    "departure|d" => \$departure,
+    "list|l|" => \$list
+);
+
+die "You can only specify one action!\n" if ($arrival && $departure);
+print "Ignoring --list because it's pointless with --arival or --departure" if ($list && ($arrival || $departure));
+
+if (not -e $trackfile){
+    print "Data file not present, creating '$trackfile'\n";
+    touch_file($trackfile);
+}
+
+if (!$arrival && !$departure){
+    my $startDate = 1464739200; # Date when tracking started
+    my $workPerDayTarget = 5;   # Daily hour target, note that this includes weekends so divide your week hour target by 7
+    my $daysElapsed = ((time - $startDate) / 60.0 / 60.0 / 24.0);
+    my $workedHoursTarget = ($daysElapsed * $workPerDayTarget);
+
+    my $TRACK;
+    my $total = 0;
+    open($TRACK, "<$trackfile") or die "Couldn't open tracking file!\n";
+    print "Listing history:\n" if ($list);
+    while (<$TRACK>){
+        if ($_ =~ /(\d+):(\d+)/){
+            if ($list){
+                my ($sec, $min, $hour, $mday, $mon, $year, $wday, $yday, $isdst) = localtime($1);
+                my $timeWorked = ($2 / 60 / 60);
+                print "$year/$mon/$mday: $timeWorked hours\n";
+            }
+            $total += $2;
+        } else{
+            $total += $_ if ($_ =~ /\d/);
+        }
+    }
+    print "No data present\n" if (($total < 1) && $list);
+    close($TRACK);
+    print "Total work time:\n";
+    print_time($total);
+    print "---\n";
+    print "Target       : $workedHoursTarget\n";
+    print "Free (approx): " . (($total / 60 / 60) - $workedHoursTarget) . "\n";
+    print "This wk      : " . (((($total / 60 / 60) - $workedHoursTarget) - (2 * $workPerDayTarget)) / $workPerDayTarget) . " days\n";
+    print "---\n";
+    if (-e $lockfile){
+        print "A session is currently open:\n";
+        print_time(getlocktime());
+    }
+}
+
+if ($arrival){
+    die "You already have a session open!\n" if (-e $lockfile);
+    my $LOCK;
+    open($LOCK, ">$lockfile") or die "Couldn't create session!\n";
+    print $LOCK time;
+    close($LOCK);
+}
+
+if ($departure){
+    die "You don't have an open session!\n" if (not -e $lockfile);
+    my $LOCK;
+    my $TRACK;
+    open($LOCK, "<$lockfile") or die "Couldn't read session!\n";
+    open($TRACK, ">>$trackfile") or die "Couldn't write to tracking file~\n";
+    while (<$LOCK>){
+        my $time = time;
+        my $worktime = ($time - $_);
+        print "You have worked for:\n";
+        print_time($worktime);
+        print "Goodbye.\n";
+        print $TRACK "$time:$worktime\n";
+    }
+    close($LOCK);
+    close($TRACK);
+    unlink($lockfile);
+}
+
+
+sub print_time
+{
+    my $time = shift;
+    print "Hours  : " . ($time / 60 / 60) . "\n";
+    print "Minutes: " . ($time / 60) . "\n";
+    print "Seconds: " . ($time) . "\n";
+}
+
+sub getlocktime
+{
+    if (-e $lockfile){
+        my $LOCK;
+        open($LOCK, $lockfile) or die "Couldn't read session!";
+        while (<$LOCK>){
+            if ($_ =~ /\d/){
+                close($LOCK);
+                return (time - trim($_));
+            }
+        }
+        close($LOCK);
+    }
+}
+
+sub trim
+{
+    my $s = shift;
+    $s =~ s/^\s+|\s+$//g;
+    return $s;
+}
+
+sub touch_file
+{
+    my $file = shift;
+    `touch $file`;
+}
